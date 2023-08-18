@@ -72,6 +72,59 @@ def apply_rule(
     if check_isolated_vertices: g.remove_isolated_vertices()
 
 
+MatchMickyTestType = Tuple[VT,VT,List[VT],List[VT]]
+
+def match_micky_test(
+        g: BaseGraph[VT,ET], 
+        matchf:Optional[Callable[[ET],bool]]=None, 
+        num: int=-1
+        ) -> List[MatchMickyTestType[VT]]:
+    if matchf is not None: candidates = set([e for e in g.edges() if matchf(e)])
+    else: candidates = g.edge_set()
+    phases = g.phases()
+    types = g.types()
+    
+    i = 0
+    m = []
+    while (num == -1 or i < num) and len(candidates) > 0:
+        v0, v1 = g.edge_st(candidates.pop())
+        if g.is_ground(v0) or g.is_ground(v1):
+            continue
+        v0t = types[v0]
+        v1t = types[v1]
+        v0p = phases[v0]
+        v1p = phases[v1]
+        if (v0p == 0 and v1p == 0 and
+        ((v0t == VertexType.Z and v1t == VertexType.X) or (v0t == VertexType.X and v1t == VertexType.Z))):
+            v0n = [n for n in g.neighbors(v0) if not n == v1]
+            v1n = [n for n in g.neighbors(v1) if not n == v0]
+            if (
+                all([types[n] == v1t and phases[n] == 0 for n in v0n]) and
+                all([types[n] == v0t and phases[n] == 0 for n in v1n])):
+                i += 1
+                for v in v0n:
+                    for c in g.incident_edges(v): candidates.discard(c)
+                for v in v1n:
+                    for c in g.incident_edges(v): candidates.discard(c)
+                m.append((v0,v1,v0n,v1n))
+    return m
+
+def micky_test(g: BaseGraph[VT,ET], matches: List[MatchMickyTestType[VT]]) -> RewriteOutputType[ET,VT]:
+    """Performs a certain type of bialgebra rewrite given matchings supplied by
+    ``match_bialg(_parallel)``."""
+    rem_verts = []
+    etab: Dict[ET, List[int]] = dict()
+    for m in matches:
+        rem_verts.append(m[0])
+        rem_verts.append(m[1])
+        es = [g.edge(i,j) for i in m[2] for j in m[3]]
+        for e in es:
+            if e in etab: etab[e][0] += 1
+            else: etab[e] = [1,0]
+    
+    return (etab, rem_verts, [], True)
+
+
 MatchBialgType = Tuple[VT,VT,List[VT],List[VT]]
 
 def match_bialg(g: BaseGraph[VT,ET]) -> List[MatchBialgType[VT]]:

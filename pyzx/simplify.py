@@ -59,7 +59,8 @@ def simp(
     rewrite: Callable[[BaseGraph[VT,ET],List[MatchObject]],RewriteOutputType[ET,VT]],
     matchf:Optional[Union[Callable[[ET],bool], Callable[[VT],bool]]]=None,
     quiet:bool=False,
-    stats:Optional[Stats]=None) -> int:
+    stats:Optional[Stats]=None,
+    maxiter:Optional[int]=None) -> int:
     """Helper method for constructing simplification strategies based on the rules present in rules_.
     It uses the ``match`` function to find matches, and then rewrites ``g`` using ``rewrite``.
     If ``matchf`` is supplied, only the vertices or edges for which matchf() returns True are considered for matches.
@@ -75,6 +76,7 @@ def simp(
         matchf: An optional filtering function on candidate vertices or edges, which
            is passed as the second argument to the match function.
         quiet: Suppress output on numbers of matches found during simplification.
+        maxiter: The maximum number of iterations to try.
 
     Returns:
         Number of iterations of ``rewrite`` that had to be applied before no more matches were found."""
@@ -82,6 +84,8 @@ def simp(
     i = 0
     new_matches = True
     while new_matches:
+        if maxiter and i >= maxiter:
+            break
         new_matches = False
         if matchf is not None:
             m = match(g, matchf)
@@ -103,6 +107,10 @@ def simp(
             if stats is not None: stats.count_rewrites(name, len(m))
     if not quiet and i>0: print(' {!s} iterations'.format(i))
     return i
+
+
+def micky_test_simp(g: BaseGraph[VT,ET], matchf:Optional[Callable[[ET],bool]]=None, quiet:bool=False, stats:Optional[Stats]=None, maxiter:Optional[int]=None) -> int:
+    return simp(g, 'micky_test_simp', match_micky_test, micky_test, matchf=matchf, quiet=quiet, stats=stats,maxiter=maxiter)
 
 def pivot_simp(g: BaseGraph[VT,ET], matchf:Optional[Callable[[ET],bool]]=None, quiet:bool=False, stats:Optional[Stats]=None) -> int:
     return simp(g, 'pivot_simp', match_pivot_parallel, pivot, matchf=matchf, quiet=quiet, stats=stats)
@@ -191,7 +199,39 @@ def reduce_scalar(g: BaseGraph[VT,ET], quiet:bool=True, stats:Optional[Stats]=No
         i += 1
     return i
 
+def micky_test_reduce_helper(g: BaseGraph[VT,ET], depth:int, max_depth:int=6, quiet:bool=True, stats:Optional[Stats]=None) -> None:
+    def cost(g: BaseGraph[VT,ET]) -> int:
+        return len(g.vertices())
 
+    if depth >= max_depth:
+        return g, cost(g)
+
+    # rules = [micky_test_simp, pivot_simp, pivot_gadget_simp, pivot_boundary_simp, lcomp_simp, bialg_simp, spider_simp, id_simp, gadget_simp, supplementarity_simp, copy_simp]
+    rules = [pivot_simp, pivot_gadget_simp, pivot_boundary_simp, lcomp_simp, bialg_simp, spider_simp, id_simp, gadget_simp, supplementarity_simp, copy_simp]
+
+    graphs = []
+    min_cost = cost(g)
+    best_g = g
+    for rule in rules:
+        if depth <= 3:
+            print(f'{depth}: {rule}')
+        rule_g = g.copy()
+        rule(rule_g, quiet=quiet, stats=stats)
+        graphs.append(rule_g)
+        rule_best_g, rule_best_cost = micky_test_reduce_helper(rule_g, depth + 1, max_depth=max_depth, quiet=quiet, stats=stats)
+
+        if rule_best_cost < min_cost:
+            best_g = rule_best_g
+            min_cost = rule_best_cost
+
+    if min_cost == cost(g):
+        return best_g, min_cost
+
+    return micky_test_reduce_helper(best_g, 0, max_depth=max_depth, quiet=quiet, stats=stats)
+
+def micky_test_reduce(g: BaseGraph[VT,ET], quiet:bool=True, stats:Optional[Stats]=None) -> None:
+    micky_test_reduce_helper(g, depth=0, quiet=quiet, stats=stats)
+    # micky_test_simp(g, quiet=quiet, stats=stats, maxiter=1)
 
 def full_reduce(g: BaseGraph[VT,ET], quiet:bool=True, stats:Optional[Stats]=None) -> None:
     """The main simplification routine of PyZX. It uses a combination of :func:`clifford_simp` and
