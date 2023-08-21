@@ -1,4 +1,4 @@
-from typing import List, Tuple, Dict, Any, Literal, Final
+from typing import List, Tuple, Dict, Any, Literal, Final, Set
 
 from .graph.base import BaseGraph, VT, ET
 from .graph.scalar import Scalar
@@ -6,12 +6,11 @@ from .utils import VertexType, FractionLike
 
 class EGraphVertexType:
     """Type of a vertex in the egraph."""
-    Type = Literal[0,1,2,3,4]
+    Type = Literal[0,1,2,3,4,5]
     CONCRETE: Final = 0
-    GRAPH_S: Final = 1
-    GRAPH_T: Final = 2
-    EQUIV_S: Final = 3
-    EQUIV_T: Final = 4
+    IDENTITY: Final = 1
+    GRAPH: Final  = 2
+    EQUIV: Final  = 3
 
 class SpiderData():
     def __init__(self, ty: VertexType, phase: FractionLike, ninput: int, noutput: int) -> None:
@@ -31,10 +30,13 @@ class EGraph():
         self.graph: Dict[int,List[int]]                 = dict()
         self._cmap: Dict[int, SpiderData]               = dict()
         self._vindex: int                               = 0
-        self.nedges: int                                = 0
+        self._gindex: int                               = 0
+        self._eindex: int                               = 0
         self.ty: Dict[int,EGraphVertexType.Type]        = dict()
         self._vdata: Dict[int,Any]                      = dict()
         self.scalars: Dict[int, Scalar]                 = dict()
+        self.subgraphs: List[Tuple[int]]                = []
+        self.equivalences: List[Tuple[int]]             = []
 
     def clone(self) -> 'EGraph':
         cpy = EGraph()
@@ -43,7 +45,6 @@ class EGraph():
 
         cpy._cmap = self._cmap.copy()
         cpy._vindex = self._vindex
-        cpy.nedges = self.nedges
         cpy.ty = self.ty.copy()
         cpy._phase = self._phase.copy()
         cpy._vdata = self._vdata.copy()
@@ -61,15 +62,26 @@ class EGraph():
 
         egraph._cmap = {vertex:SpiderData(g.ty[vertex], g._phase[vertex], len(inputGraph[vertex]), len(g.graph[vertex])) for vertex in g.graph.keys()}
         egraph._vindex = g._vindex
-        egraph.nedges = g.nedges
         egraph.ty = {key:EGraphVertexType.CONCRETE for key in g.ty.keys()}
         egraph._vdata = g._vdata
 
-        g_s = egraph.createNode(EGraphVertexType.GRAPH_S)
-        g_t = egraph.createNode(EGraphVertexType.GRAPH_T)
+        for u, v in g.edge_set():
+            inode = egraph.createNode(EGraphVertexType.IDENTITY)
+            egraph.removeEdge(u, v)
+            egraph.removeEdge(v, u)
+            egraph.addEdge(u, inode)
+            egraph.addEdge(inode, u)
+            egraph.addEdge(v, inode)
+            egraph.addEdge(inode, v)
+
+        g_s = egraph.createNode(EGraphVertexType.GRAPH)
+        g_t = egraph.createNode(EGraphVertexType.GRAPH)
+        egraph.subgraphs.append((g_s, g_t))
         for i in g._inputs:
             egraph.addEdge(g_s, i)
+            egraph.addEdge(i, g_s)
         for o in g._outputs:
+            egraph.addEdge(g_t, o)
             egraph.addEdge(o, g_t)
         egraph.scalars[g_s] = g.scalar
 
@@ -87,22 +99,37 @@ class EGraph():
         return self._vindex - 1
 
     def addEdge(self, u, v) -> None:
-        self.graph[u].add(v)
-        self.nedges += 1
+        if v not in self.graph[u]:
+            self.graph[u].add(v)
+
+    def removeEdge(self, u, v) -> None:
+        if v in self.graph[u]:
+            self.graph[u].remove(v)
+
 
     def getNeighbors(self, vertex:int) -> List[int]:
-        egraph_neighbors = self.graph[vertex]
+        return self.graph[vertex]
+
+    def _getNeighborsConcrete(self, vertex:int, visited:Set[int]) -> List[int]:
+        egraph_neighbors = self.getNeighbors(vertex)
         neighbors = []
+        visited.add(vertex)
         for u in egraph_neighbors:
-            if self.ty(u) == EGraphVertexType.CONCRETE:
+            if u in visited:
+                continue
+            if self.ty[u] == EGraphVertexType.CONCRETE:
                 neighbors.append(set([u]))
-            elif self.ty(u) == EGraphVertexType.GRAPH_S:
-                uneighbors = self.getNeighbors(u)
+            elif self.ty[u] == EGraphVertexType.GRAPH or self.ty[u] == EGraphVertexType.IDENTITY:
+                uneighbors = self._getNeighborsConcrete(u, visited)
                 neighbors += uneighbors
-            elif self.ty(u) == EGraphVertexType.EQUIV_S:
-                uneighbors = self.getNeighbors(u)
+            elif self.ty[u] == EGraphVertexType.EQUIV:
+                uneighbors = self._getNeighborsConcrete(u, visited)
                 neighbors.append(set(uneighbors))
 
-                
+        for v in visited:
+            neighbors.remove({v}) if {v} in neighbors else None
 
+        return neighbors
 
+    def getNeighborsConcrete(self, vertex:int, visited:Set[int]=set()) -> List[int]:
+        return self._getNeighborsConcrete(vertex, set())
