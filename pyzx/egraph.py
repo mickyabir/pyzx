@@ -43,6 +43,8 @@ class EGraph():
         # Hashes spider to vertex number
         self._spiders: Dict[SpiderData, int]            = dict()
 
+        self.qubits: Dict[int, int]                     = dict()
+
         self._vindex: int                               = 0
         self._sindex: int                               = 0
         self._gindex: int                               = 0
@@ -57,6 +59,8 @@ class EGraph():
         cpy = EGraph()
         for v, d in self.graph.items():
             cpy.graph[v] = d.copy()
+
+        cpy.qubits = self.qubits.copy()
         cpy._names = self._names.copy()
         cpy._cmap = self._cmap.copy()
         cpy._vindex = self._vindex
@@ -74,6 +78,7 @@ class EGraph():
         egraph = EGraph()
 
         egraph.graph = {v:set() for v in g.graph.keys()}
+        egraph.qubits = {v:g.qubits()[v] for v in g.graph.keys()}
         inputCount = {v:0 for v in g.graph.keys()}
         visited = set()
         candidates = g.inputs().copy()
