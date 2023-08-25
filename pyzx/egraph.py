@@ -35,7 +35,7 @@ class SpiderData():
         
 class EGraph():
     def __init__(self) -> None:
-        self.graph: Dict[int,List[int]]                 = dict()
+        self.graph: Dict[int,Set[int]]                  = dict()
         self._names: Dict[int, str]                     = dict()
 
         # Maps vertex number to spider data
@@ -73,32 +73,47 @@ class EGraph():
     def from_diagram(g: BaseGraph[VT,ET]) -> 'EGraph':
         egraph = EGraph()
 
-        inputGraph = {v:set() for v in g.graph.keys()}
-        for v in g.graph.keys():
+        egraph.graph = {v:set() for v in g.graph.keys()}
+        inputCount = {v:0 for v in g.graph.keys()}
+        visited = set()
+        candidates = g.inputs().copy()
+        while candidates:
+            v = candidates.pop(0)
+            visited.add(v)
             for u in g.graph[v].keys():
-                inputGraph[u].add(v)
+                if u not in visited:
+                    egraph.graph[v].add(u)
+                    inputCount[u] += 1
 
-        for v in g.graph.keys():
-            sdata = SpiderData(g.ty[v], g._phase[v], len(inputGraph[v]), len(g.graph[v]))
-            egraph.createNode(EGraphVertexType.CONCRETE, sdata=sdata)
+                    if u not in candidates:
+                        candidates.append(u)
 
-        for u, v in g.edge_set():
-            inode = egraph.createNode(EGraphVertexType.IDENTITY)
-            egraph.removeEdge(u, v)
-            egraph.removeEdge(v, u)
-            egraph.addEdge(u, inode)
-            egraph.addEdge(inode, u)
-            egraph.addEdge(v, inode)
-            egraph.addEdge(inode, v)
+        for v in egraph.graph.keys():
+            sdata = SpiderData(g.ty[v], g._phase[v], inputCount[v], len(egraph.graph[v]))
+            egraph._cmap[v] = sdata
+            egraph.ty[v] = EGraphVertexType.CONCRETE
+            if sdata in egraph._spiders.keys():
+                egraph._names[v] = egraph._spiders[sdata]
+            else:
+                egraph._names[v] = f's{v}'
+                egraph._spiders[sdata] = f's{v}'
 
-        g_s = egraph.createNode(EGraphVertexType.GRAPH)
-        g_t = egraph.createNode(EGraphVertexType.GRAPH)
-        egraph.subgraphs.append((g_s, g_t))
+        egraph._vindex = g._vindex
+        egraph._sindex = g._vindex
+
+        nodes = list(egraph.graph.keys()).copy()
+        for u in nodes:
+            neighbors = egraph.graph[u].copy()
+            for v in neighbors:
+                inode = egraph.createIdentNode()
+                egraph.removeEdge(u, v)
+                egraph.addEdge(u, inode)
+                egraph.addEdge(inode, v)
+
+        g_s, g_t = egraph.createGraphNodes()
         for i in g._inputs:
             egraph.addEdge(g_s, i)
-            egraph.addEdge(i, g_s)
         for o in g._outputs:
-            egraph.addEdge(g_t, o)
             egraph.addEdge(o, g_t)
         egraph.scalars[g_s] = g.scalar
 
@@ -107,33 +122,70 @@ class EGraph():
     def concreteNodes(self) -> List[int]:
         return list(self._cmap.keys())
 
-    def createNode(self, ty, sdata:SpiderData=None, vdata=None) -> int:
-        self.graph[self._vindex] = set()
-        self.ty[self._vindex] = ty
+    def createSpiderNode(self, sdata:SpiderData = None, vdata=None) -> int:
+        spider = self._vindex
+        self.graph[spider] = set()
+        self.ty[spider] = EGraphVertexType.CONCRETE
+        self._cmap[spider] = sdata
 
-        if ty == EGraphVertexType.CONCRETE:
-            self._cmap[self._vindex] = sdata
-            if sdata in self._spiders.keys():
-                self._names[self._vindex] = self._spiders[sdata]
-            else:
-                self._names[self._vindex] = f's{self._sindex}'
-                self._spiders[sdata] = f's{self._sindex}'
-            self._sindex += 1
-        elif ty == EGraphVertexType.GRAPH:
-            self._names[self._vindex] = f'g{self._gindex}'
-            self._gindex += 1
-        elif ty == EGraphVertexType.EQUIV:
-            self._names[self._vindex] = f'e{self._eindex}'
-            self._eindex += 1
-        elif ty == EGraphVertexType.IDENTITY:
-            self._names[self._vindex] = f'id'
+        if sdata in self._spiders.keys():
+            self._names[spider] = self._spiders[sdata]
+        else:
+            self._names[spider] = f's{self._sindex}'
+            self._spiders[sdata] = f's{self._sindex}'
 
         if vdata is not None:
             self._vdata[self._vindex] = vdata
 
+        self._sindex += 1
         self._vindex += 1
 
-        return self._vindex - 1
+        return spider
+
+    def createGraphNodes(self) -> List[int]:
+        g_s = self._vindex
+        g_t = self._vindex + 1
+
+        self.graph[g_s] = set()
+        self.graph[g_t] = set()
+        self.ty[g_s] = EGraphVertexType.GRAPH
+        self.ty[g_t] = EGraphVertexType.GRAPH
+        self.subgraphs.append((g_s, g_t))
+
+        self._names[g_s] = f'g{self._gindex}_s'
+        self._names[g_t] = f'g{self._gindex}_t'
+
+        self._gindex += 1
+        self._vindex += 2
+
+        return g_s, g_t
+
+    def createEquivNodes(self) -> List[int]:
+        e_s = self._vindex
+        e_t = self._vindex + 1
+
+        self.graph[e_s] = set()
+        self.graph[e_t] = set()
+        self.ty[e_s] = EGraphVertexType.EQUIV
+        self.ty[e_t] = EGraphVertexType.EQUIV
+        self.equivalences.append((e_s, e_t))
+
+        self._names[e_s] = f'e{self._eindex}_s'
+        self._names[e_t] = f'e{self._eindex}_t'
+
+        self._eindex += 1
+        self._vindex += 2
+
+        return e_s, e_t
+
+    def createIdentNode(self) -> int:
+        iden = self._vindex
+        self.graph[iden] = set()
+        self.ty[iden] = EGraphVertexType.IDENTITY
+        self._names[iden] = f'id'
+        self._vindex += 1
+
+        return iden
 
     def addEdge(self, u, v) -> None:
         if v not in self.graph[u]:
@@ -190,8 +242,10 @@ def match_bialg_parallel(
     i = 0
     m = []
     candidates = g.concreteNodes()
+    import pdb
+    pdb.set_trace()
     while (num == -1 or i < num) and len(candidates) > 0:
-        v0 = candidates.pop()
+        v0 = candidates.pop(0)
         v0_neighbors = g.getNeighborsConcrete(v0)
         for v1 in v0_neighbors:
             v0t = types(v0)
